@@ -1,0 +1,34 @@
+marys word tracker
+
+tracks weather each day of a writing
+tracks KEYWORDS: with colon after
+if its a number it can be graphed over time
+
+
+maybe do a spellcheck on elements?
+or just have user manually enter
+a list of things they want to track in all caps
+
+MOVIE, name
+SLEEP, number
+
+
+.marydata should be filetype!! haha
+
+
+could be a whole app using PyQt lol odear killme
+
+
+marys notes: July 7th, 2018
+here you go my boy
+
+
+things for bucky to do: 
+make list of tags (from previous text files)
+make gui for mawy
+add text after the number as a note to that day
+add date box so you can change the entry in case i want to do a few days later or something
+option to toggle cartoon rendering off/on
+add way to make a list of non-numeric tags (ex: Movies), alphabetically or chronologically
+
+ask for directory where to store the text files the program saves
