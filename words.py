@@ -11,10 +11,10 @@ import re
 import matplotlib.pyplot as plt
 import datetime
 
-#finds abspath of all text files in this directory (and subdirectories)
-def getFiles():
+#finds abspath of all text files in rootDir (and subdirectories)
+def getFiles(rootDir = '.'): # default to local dir
     files = []
-    for dirpath, dirnames, filenames in os.walk('.'):
+    for dirpath, dirnames, filenames in os.walk(rootDir):
         for s in filenames:
             if s.endswith('.txt'):
                 files.append(os.path.join(os.path.abspath(dirpath),s))              

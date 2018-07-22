@@ -11,9 +11,14 @@ import functools
 
 configPath = 'config.txt'
 
-class Window(QtWidgets.QMainWindow):
-    def __init__(self, parent=None):
-        super(Window, self).__init__(parent)
+class JournalWindow(QtWidgets.QMainWindow):
+    def __init__(self, *args):
+        QtWidgets.QMainWindow.__init__(self, *args)
+
+        # init variables
+        self.cal = None
+        self.currentDate = QtCore.QDate.currentDate()
+        self.firstPaint = True
 
         self.loadConfig()
 
@@ -39,15 +44,73 @@ class Window(QtWidgets.QMainWindow):
         fileMenu.addAction(quitAction)
 
         journalAction = QtWidgets.QAction('Journal', self)
-        journalAction.triggered.connect(self.openJournal)
+        journalAction.triggered.connect(self.openJournalFrame)
         menuBar.addAction(journalAction)
 
         analysisAction = QtWidgets.QAction('Analysis', self)
-        analysisAction.triggered.connect(self.openAnalysis)
+        analysisAction.triggered.connect(self.openAnalysisFrame)
         menuBar.addAction(analysisAction)
-        
 
-        #self.openJournal()
+        # delayed a bit so window has chance to open and draw
+        QtCore.QTimer.singleShot(500, self.loadJournals)
+
+
+    def openSaveDialog(self):
+        options = QtWidgets.QFileDialog.DontResolveSymlinks |  QtWidgets.QFileDialog.ShowDirsOnly
+        self.opts['saveLocation'] = QtWidgets.QFileDialog.getExistingDirectory(self, 'Select the save folder for your journals', '', options)
+
+    def loadJournals(self):
+        notInOpts = 'saveLocation' not in self.opts 
+        if notInOpts or not os.path.exists(self.opts['saveLocation']):
+            msg = QtWidgets.QMessageBox()
+            msg.setWindowTitle('Journal Folder not found!')
+            if notInOpts:
+                msg.setText('Please select where you want to save your journals.')
+                msg.setIcon(QtWidgets.QMessageBox.Information)
+            else:
+                msg.setText("Can't find journal folder! Did it move?")
+                msg.setIcon(QtWidgets.QMessageBox.Critical)
+
+            msg.exec_()
+
+            self.opts['saveLocation'] = ''
+            while not os.path.exists(self.opts['saveLocation']):
+                self.openSaveDialog()
+
+
+        print(f'loading journals from folder at: {self.opts["saveLocation"]}')
+
+        # load all files in that folder recursively
+        # check for correct date by name or by creation date
+        # have journal show journal date at top of file in a label like 'July-16-2018, 5 days ago'
+        files = self.getFilePaths(self.opts['saveLocation'])
+        #print('\n'.join(files))
+
+        # load all files into memory when you click either journal or analysis (show progress bar)
+        # analize all files when you click analyze (add filename to set so know if need to reanalyze as u write more while program going)
+
+        # if you change file then save it to disk and update loaded file and flag for analysis
+
+        self.openJournalFrame()
+
+    #finds abspath of all text files in rootDir (and subdirectories)
+    def getFilePaths(self, rootDir = '.'): # default to local dir
+        files = []
+        for dirpath, dirnames, filenames in os.walk(rootDir):
+            for s in filenames:
+                if s.endswith('.txt'):
+                    files.append(os.path.join(os.path.abspath(dirpath),s))              
+        return files
+        
+    def saveCurrentJournal(self):
+        if not self.editor:
+            return
+
+        name = self.currentDate.toString('yyyy-MM-dd.txt')
+        with open(os.path.join(self.opts['saveLocation'],name), 'w') as file:
+            file.write(str(self.editor.toPlainText()))
+
+
 
     def loadConfig(self):
         self.opts = {} # make sure values are always lists (makes things simpler)
@@ -58,28 +121,15 @@ class Window(QtWidgets.QMainWindow):
             
             for line in lines:
                 if line:
-                    splits = line.split(':')
+                    splits = line.split(':',1)
                     if len(splits) == 2:
                         ss = splits[1].split(',')
                         self.opts[splits[0]] = ss[0] if len(ss) == 1 else ss
                     else:
-                        print('weow somethings wrong with the config file lol')
+                        print('problem with the config file...')
 
             #print(self.opts)
 
-
-    def locateFiles(self):
-
-        #if self.opts
-
-        msg = QtWidgets.QMessageBox()
-        msg.setIcon(QtWidgets.QMessageBox.Critical)
-        msg.setText("Data display window is disabled for now sorry!")
-        msg.setWindowTitle("Please specify ")
-        msg.exec_()
-
-
-        # search for config file
 
     def saveConfig(self):
         with open(configPath, 'w') as file:
@@ -89,12 +139,27 @@ class Window(QtWidgets.QMainWindow):
                 else:
                     file.write(f'{k}:{v}\n')
 
+    def openCalendar(self):
+        self.cal = CalendarDateSelect(self)
+        self.cal.show()
 
+    def updateDate(self, date=None):
+        if date:
+            self.currentDate = date
+        self.dateLabel.setText(self.currentDate.toString('MMMM d, yyyy'))
 
-    def openJournal(self):
+    def openJournalFrame(self):
+
         self.clearLayout(self.layout)
 
         self.toolBar.clear()
+
+        hf = QtGui.QFont('Helvetica', 14)
+
+        calendarAction = QtWidgets.QAction('Select Date', self)#, font= hf)
+        calendarAction.triggered.connect(self.openCalendar)
+        self.toolBar.addAction(calendarAction)
+
         fontAction = QtWidgets.QAction('Font', self)
         fontAction.triggered.connect(self.openFontWindow)
         self.toolBar.addAction(fontAction)
@@ -109,10 +174,16 @@ class Window(QtWidgets.QMainWindow):
 
         jlayout = QtWidgets.QVBoxLayout()
 
+        self.dateLabel = QtWidgets.QLabel('', font=hf)
+        self.updateDate()
+
+        jlayout.addWidget(self.dateLabel)
+
         self.editor = MyPlainTextEdit()
         self.loadEditorSettings()
 
         jlayout.addWidget(self.editor)
+
 
         self.layout.addLayout(jlayout)
 
@@ -128,7 +199,9 @@ class Window(QtWidgets.QMainWindow):
             # file save and open by date
             # spellcheck ? https://stackoverflow.com/questions/8722061/pyqt-how-to-turn-on-off-spellchecking
 
-    def openAnalysis(self):
+    def openAnalysisFrame(self):
+        self.saveCurrentJournal()
+
         self.clearLayout(self.layout)
 
         self.toolBar.clear()
@@ -222,6 +295,9 @@ class Window(QtWidgets.QMainWindow):
         self.close() # so close event is triggered
 
     def closeEvent(self, e):
+        if self.cal:
+            self.cal.close()
+        self.saveCurrentJournal()
         self.saveConfig()
         print('goodbye!!!')
         # save config options here to file
@@ -240,10 +316,34 @@ class MyPlainTextEdit(QtWidgets.QPlainTextEdit):
             QtWidgets.QPlainTextEdit.keyPressEvent(self, event)
 
 
+class CalendarDateSelect(QtWidgets.QFrame):
+    def __init__(self, window, *args):
+        QtWidgets.QFrame.__init__(self, *args)
+
+        self.setWindowTitle('Select Journal Date')
+
+        self.layout = QtWidgets.QVBoxLayout(self)
+        self.cal = QtWidgets.QCalendarWidget()
+        self.layout.addWidget(self.cal)
+
+        self.doneButton = QtWidgets.QPushButton('Open Journal')
+        self.doneButton.clicked.connect(self.returnDate)
+        self.layout.addWidget(self.doneButton)
+
+        self.window = window
+
+        g = self.window.geometry()
+        self.move(g.x() + 100, g.y() + 100)
+
+    def returnDate(self):
+        self.window.updateDate(self.cal.selectedDate())
+        self.close()
+
+
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
 
-    main = Window()
+    main = JournalWindow()
     main.show()
 
     sys.exit(app.exec_())

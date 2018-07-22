@@ -5,7 +5,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{813e93b6-9bc3-4fc6-9388-149e02595d4d}</ProjectGuid>
     <ProjectHome />
-    <StartupFile>wordsApp.py</StartupFile>
+    <StartupFile>journals.py</StartupFile>
     <SearchPath />
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
@@ -26,9 +26,8 @@
     <Content Include="marysappideas.txt" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="setup.py" />
     <Compile Include="words.py" />
-    <Compile Include="wordsApp.py" />
+    <Compile Include="journals.py" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="journalFolder" />
