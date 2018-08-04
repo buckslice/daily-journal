@@ -1,10 +1,12 @@
 import os
 import sys
 from PyQt5 import QtGui, QtCore, QtWidgets
+from PyQt5.QtWidgets import QSizePolicy
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
 
 import random
 import functools
@@ -16,9 +18,8 @@ class JournalWindow(QtWidgets.QMainWindow):
         QtWidgets.QMainWindow.__init__(self, *args)
 
         # init variables
-        self.cal = None
+        self.calendar = None
         self.currentDate = QtCore.QDate.currentDate()
-        self.firstPaint = True
 
         self.loadConfig()
 
@@ -35,9 +36,6 @@ class JournalWindow(QtWidgets.QMainWindow):
         menuBar = self.menuBar()
         fileMenu = menuBar.addMenu('File')
 
-        self.toolBar = QtWidgets.QToolBar(self)
-        self.addToolBar(QtCore.Qt.TopToolBarArea, self.toolBar)
-
         quitAction = QtWidgets.QAction('Save and Quit', self)
         quitAction.setShortcut('Ctrl+W') # Q wont work for some reason?
         quitAction.triggered.connect(self.closeApp)
@@ -51,7 +49,12 @@ class JournalWindow(QtWidgets.QMainWindow):
         analysisAction.triggered.connect(self.openAnalysisFrame)
         menuBar.addAction(analysisAction)
 
+        self.optionsMenu = menuBar.addMenu('Options')
+
+        menuBar.addMenu(self.optionsMenu)
+
         # delayed a bit so window has chance to open and draw
+        self.journals = {} # dict from QDate to string, should also store flag for if it needs analysis later too
         QtCore.QTimer.singleShot(500, self.loadJournals)
 
 
@@ -84,12 +87,24 @@ class JournalWindow(QtWidgets.QMainWindow):
         # check for correct date by name or by creation date
         # have journal show journal date at top of file in a label like 'July-16-2018, 5 days ago'
         files = self.getFilePaths(self.opts['saveLocation'])
-        #print('\n'.join(files))
+        for file in files:
+            n = os.path.split(file)[1]
+            n = os.path.splitext(n)[0]
+            parts = n.split('-')
+            if len(parts) == 3:
+                print(f'{n} correctly formatted')
+                date = QtCore.QDate.fromString(''.join(parts), 'yyyyMMdd')
+                with open(file,'r',errors="ignore") as f:
+                    words = f.read()#.replace('\n',' ')
 
-        # load all files into memory when you click either journal or analysis (show progress bar)
-        # analize all files when you click analyze (add filename to set so know if need to reanalyze as u write more while program going)
-
-        # if you change file then save it to disk and update loaded file and flag for analysis
+                if date in self.journals:
+                    print('this is weird')
+                    self.journals[date] = f'{self.journals[date]}\n{words}'
+                else:
+                    self.journals[date] = words
+                
+            else:
+                print(f'{n} incorrectly formatted file name. should be yyyy-MM-dd')
 
         self.openJournalFrame()
 
@@ -106,14 +121,39 @@ class JournalWindow(QtWidgets.QMainWindow):
         if not self.editor:
             return
 
-        name = self.currentDate.toString('yyyy-MM-dd.txt')
-        with open(os.path.join(self.opts['saveLocation'],name), 'w') as file:
-            file.write(str(self.editor.toPlainText()))
+        name = self.currentDate.toString('yyyy-MM-dd')
+        fileName = os.path.join(self.opts['saveLocation'],f'{name}.txt')
+        words = str(self.editor.toPlainText())
+        if not words: # if editor is empty
+            # delete journal file if it exists
+            if os.path.exists(fileName):
+                print(f'{name} is now empty, removing')
+                os.remove(fileName)
+            else: # just warn that no new journal is saved
+                print(f'{name} empty journal, not saving')
 
+            # remove from memory too
+            if self.currentDate in self.journals:
+                del self.journals[self.currentDate]
+            return
+
+        # update current entry in memory
+        self.journals[self.currentDate] = words
+        # save to journal folder
+        with open(fileName, 'w') as file:
+            print(f'{name} saving journal')
+            file.write(words)
 
 
     def loadConfig(self):
         self.opts = {} # make sure values are always lists (makes things simpler)
+
+        # setup defaults here
+        self.opts['font'] = ['Helvetica', '14']
+        self.opts['bgColor'] = ['255','255','255']
+        self.opts['fgColor'] = ['0','0','0']
+        self.opts['cartoonMode'] = ['False']
+
         if os.path.isfile(configPath):
             with open(configPath, 'r') as file:
                 lines = file.readlines()
@@ -140,107 +180,126 @@ class JournalWindow(QtWidgets.QMainWindow):
                     file.write(f'{k}:{v}\n')
 
     def openCalendar(self):
-        self.cal = CalendarDateSelect(self)
-        self.cal.show()
+        self.calendar = CalendarDateSelect(self, [d for d,w in self.journals.items()])
+        self.calendar.show()
 
     def updateDate(self, date=None):
         if date:
+            self.saveCurrentJournal()
             self.currentDate = date
-        self.dateLabel.setText(self.currentDate.toString('MMMM d, yyyy'))
+
+        if self.currentDate in self.journals:
+            self.editor.setPlainText(self.journals[self.currentDate])
+        else:
+            self.editor.setPlainText('')
+        self.dateButton.setText(self.currentDate.toString('MMMM d, yyyy'))
 
     def openJournalFrame(self):
+        self.optionsMenu.clear()
 
         self.clearLayout(self.layout)
 
-        self.toolBar.clear()
+        self.editor = MyPlainTextEdit()
 
         hf = QtGui.QFont('Helvetica', 14)
 
-        calendarAction = QtWidgets.QAction('Select Date', self)#, font= hf)
-        calendarAction.triggered.connect(self.openCalendar)
-        self.toolBar.addAction(calendarAction)
-
-        fontAction = QtWidgets.QAction('Font', self)
+        fontAction = QtWidgets.QAction('Set Font', self)
         fontAction.triggered.connect(self.openFontWindow)
-        self.toolBar.addAction(fontAction)
 
-        bgColorAction = QtWidgets.QAction('Set BG', self)
-        bgColorAction.triggered.connect(functools.partial(self.setEditorColor, True))
-        self.toolBar.addAction(bgColorAction)
+        self.optionsMenu.addAction(fontAction)
 
-        fgColorAction = QtWidgets.QAction('Set FG', self)
-        fgColorAction.triggered.connect(functools.partial(self.setEditorColor, False))
-        self.toolBar.addAction(fgColorAction)
+        self.bgColorAction = QtWidgets.QAction('Set BG', self)
+        self.bgColorAction.triggered.connect(functools.partial(self.setEditorColor, True, True))
+        self.optionsMenu.addAction(self.bgColorAction)
+
+        self.fgColorAction = QtWidgets.QAction('Set FG', self)
+        self.fgColorAction.triggered.connect(functools.partial(self.setEditorColor, False, True))
+        self.optionsMenu.addAction(self.fgColorAction)
 
         jlayout = QtWidgets.QVBoxLayout()
+        hlayout = QtWidgets.QHBoxLayout()
+        self.dateButton = QtWidgets.QPushButton('', font=hf)
+        self.dateButton.clicked.connect(self.openCalendar)
+        hlayout.addWidget(self.dateButton)
+        hlayout.addStretch()
 
-        self.dateLabel = QtWidgets.QLabel('', font=hf)
-        self.updateDate()
-
-        jlayout.addWidget(self.dateLabel)
-
-        self.editor = MyPlainTextEdit()
-        self.loadEditorSettings()
-
+        jlayout.addLayout(hlayout)
         jlayout.addWidget(self.editor)
-
 
         self.layout.addLayout(jlayout)
 
-        #self.jtab.setLayout(jlayout)
-
-        # have program save all settings in config file!
-        # need date thing
-        # one journal per day, open and close by date (QCalendar!!!)
-        # make toolbar
-            # have dark mode option
-            # font size
-            # have font select dropdown
-            # file save and open by date
-            # spellcheck ? https://stackoverflow.com/questions/8722061/pyqt-how-to-turn-on-off-spellchecking
+        self.loadEditorSettings()
+        self.updateDate()
 
     def openAnalysisFrame(self):
         self.saveCurrentJournal()
-
+        self.editor = None # kinda filth but whatever
+        self.optionsMenu.clear()
         self.clearLayout(self.layout)
-
-        self.toolBar.clear()
+        
+        self.cartoonAction = QtWidgets.QAction('Cartoon mode', self)
+        self.cartoonAction.setCheckable(True)
+        self.cartoonAction.setChecked(self.getOpt('cartoonMode'))
+        self.optionsMenu.addAction(self.cartoonAction)
 
         # a figure instance to plot on
         self.figure = Figure()
 
-        # this is the Canvas Widget that displays the `figure`
-        # it takes the `figure` instance as a parameter to __init__
+        self.figure.set_tight_layout(True)
+        
         self.canvas = FigureCanvas(self.figure)
 
-        # this is the Navigation widget
-        # it takes the Canvas widget and a parent
-        self.toolbar = NavigationToolbar(self.canvas, self)
+        self.navToolBar = NavigationToolbar(self.canvas, self)
 
         # set the layout
         alayout = QtWidgets.QVBoxLayout()
-        alayout.addWidget(self.toolbar)
+
+        topLayout = QtWidgets.QHBoxLayout()
+        plotButton = QtWidgets.QPushButton('Plot')
+        plotButton.clicked.connect(self.plotWithOptions)
+        topLayout.addWidget(plotButton)
+
+        ccb = CheckableComboBox()
+        #ccb.setSizePolicy(QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum))
+        #ccb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+        items = ['dog','cat','donger']
+        for i,item in enumerate(items):
+            ccb.addItem(item)
+            item = ccb.model().item(i, 0)
+            item.setCheckState(QtCore.Qt.Unchecked)
+
+        #ccb.adjustSize()
+        #ccb.resize(200,30)
+        ccb.setMinimumSize(100,20)
+
+        topLayout.addWidget(ccb)
+
+        topLayout.addStretch()
+        alayout.addLayout(topLayout)
+
+        alayout.addWidget(self.navToolBar)
         alayout.addWidget(self.canvas)
+
         self.layout.addLayout(alayout)
 
-        ''' plot some random stuff '''
+    def plotWithOptions(self):
+        isChecked = self.cartoonAction.isChecked()
+        self.opts['cartoonMode'] = isChecked
+        if isChecked:
+            with plt.xkcd():
+                self.plot()
+        else:
+            self.plot()
+
+    def plot(self):
         # random data
         data = [random.random() for i in range(10)]
-
-        # create an axis
+        self.figure.clear()
         ax = self.figure.add_subplot(111)
-
-        # discards the old graph
-        ax.clear()
-
-        # plot data
         ax.plot(data, '*-')
-
-        # refresh canvas
         self.canvas.draw()
 
-
-    # deserialize option and return correct object
+    # deserialize option from its string form and return correct type object
     def getOpt(self, opt):
         od = self.opts[opt]
         if opt == 'font':
@@ -248,6 +307,8 @@ class JournalWindow(QtWidgets.QMainWindow):
         elif opt == 'bgColor' or opt == 'fgColor':
             c = [int(col) for col in od]
             return QtGui.QColor(c[0],c[1],c[2])
+        elif opt == 'cartoonMode':
+            return od == 'True'
         else:
             print(f'unknown opt: {opt}!')
 
@@ -258,24 +319,27 @@ class JournalWindow(QtWidgets.QMainWindow):
             self.opts['font'] = [font.family(), font.pointSize()]
 
     def loadEditorSettings(self):
-        if 'font' not in self.opts:
-            self.opts['font'] = ['Helvetica', 14]
-        if 'bgColor' not in self.opts:
-            self.opts['bgColor'] = [255,255,255]
-        if 'fgColor' not in self.opts:
-            self.opts['fgColor'] = [0,0,0]
-
         self.editor.setFont(self.getOpt('font'))
-        self.setEditorColor(True,self.getOpt('bgColor'))
-        self.setEditorColor(False,self.getOpt('fgColor'))
+        self.setEditorColor(True,False)
+        self.setEditorColor(False,False)
 
-    def setEditorColor(self, isBg, color = None):
-        if not color:
-            optStr = 'bgColor' if isBg else 'fgColor'
-            color = QtWidgets.QColorDialog.getColor(self.getOpt(optStr))
+    def setEditorColor(self, isBg, prompt):
+        optStr = 'bgColor' if isBg else 'fgColor'
+        color = self.getOpt(optStr)
+
+        if prompt:
+            promptStr = f'Select {"background color" if isBg else "foreground color"}'
+            color = QtWidgets.QColorDialog.getColor(
+                color, self.parentWidget(), promptStr)
             if not color.isValid():
                 return
-            self.opts[optStr] = [color.red(), color.green(), color.blue()]
+
+        pixmap = QtGui.QPixmap(QtCore.QSize(16, 16))
+        pixmap.fill(color)
+        action = self.bgColorAction if isBg else self.fgColorAction
+        action.setIcon(QtGui.QIcon(pixmap))
+
+        self.opts[optStr] = [color.red(), color.green(), color.blue()]
         vp = self.editor.viewport()
         p = vp.palette()
         p.setColor((vp.backgroundRole() if isBg else vp.foregroundRole()), color)
@@ -295,8 +359,8 @@ class JournalWindow(QtWidgets.QMainWindow):
         self.close() # so close event is triggered
 
     def closeEvent(self, e):
-        if self.cal:
-            self.cal.close()
+        if self.calendar:
+            self.calendar.close()
         self.saveCurrentJournal()
         self.saveConfig()
         print('goodbye!!!')
@@ -317,13 +381,20 @@ class MyPlainTextEdit(QtWidgets.QPlainTextEdit):
 
 
 class CalendarDateSelect(QtWidgets.QFrame):
-    def __init__(self, window, *args):
+    def __init__(self, window, journalDates, *args):
         QtWidgets.QFrame.__init__(self, *args)
 
         self.setWindowTitle('Select Journal Date')
 
         self.layout = QtWidgets.QVBoxLayout(self)
         self.cal = QtWidgets.QCalendarWidget()
+
+        form = QtGui.QTextCharFormat()
+        #p = QtGui.QPen(QtGui.QColor(0,255,0))
+        form.setBackground(QtGui.QColor(0,255,0))
+        for date in journalDates:
+            self.cal.setDateTextFormat(date, form)
+
         self.layout.addWidget(self.cal)
 
         self.doneButton = QtWidgets.QPushButton('Open Journal')
@@ -339,6 +410,22 @@ class CalendarDateSelect(QtWidgets.QFrame):
         self.window.updateDate(self.cal.selectedDate())
         self.close()
 
+
+class CheckableComboBox(QtWidgets.QComboBox):
+    def __init__(self):
+        super(CheckableComboBox, self).__init__()
+        self.view().pressed.connect(self.handleItemPressed)
+        self.setModel(QtGui.QStandardItemModel(self))
+
+    def handleItemPressed(self, index):
+        item = self.model().itemFromIndex(index)
+        if item.checkState() == QtCore.Qt.Checked:
+            item.setCheckState(QtCore.Qt.Unchecked)
+        else:
+            item.setCheckState(QtCore.Qt.Checked)
+
+# ColorButton from formlayout.py in matplotlib was cool
+# spellcheck ? https://stackoverflow.com/questions/8722061/pyqt-how-to-turn-on-off-spellchecking
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
