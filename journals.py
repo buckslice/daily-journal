@@ -7,6 +7,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 import random
 import functools
@@ -55,6 +56,9 @@ class JournalWindow(QtWidgets.QMainWindow):
 
         # delayed a bit so window has chance to open and draw
         self.journals = {} # dict from QDate to string, should also store flag for if it needs analysis later too
+        self.metaDataByDate = {} # QDate to metadata list for each doc
+        self.metaData = {} # metadata string to list of date and value tuples
+        # qdate, to string of whole doc, list of metadata, and flag for metadata or maybe anotehr metadata dict.yaaaa!
         QtCore.QTimer.singleShot(500, self.loadJournals)
 
 
@@ -143,6 +147,10 @@ class JournalWindow(QtWidgets.QMainWindow):
         with open(fileName, 'w') as file:
             print(f'{name} saving journal')
             file.write(words)
+
+        # remove metaData entry so it gets regenerated next time
+        if self.currentDate in self.metaDataByDate:
+            del self.metaDataByDate[self.currentDate]
 
 
     def loadConfig(self):
@@ -259,20 +267,14 @@ class JournalWindow(QtWidgets.QMainWindow):
         plotButton.clicked.connect(self.plotWithOptions)
         topLayout.addWidget(plotButton)
 
-        ccb = CheckableComboBox()
+        self.ccb = CheckableComboBox()
         #ccb.setSizePolicy(QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum))
         #ccb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
-        items = ['dog','cat','donger']
-        for i,item in enumerate(items):
-            ccb.addItem(item)
-            item = ccb.model().item(i, 0)
-            item.setCheckState(QtCore.Qt.Unchecked)
-
         #ccb.adjustSize()
         #ccb.resize(200,30)
-        ccb.setMinimumSize(100,20)
+        self.ccb.setMinimumSize(100,20)
 
-        topLayout.addWidget(ccb)
+        topLayout.addWidget(self.ccb)
 
         topLayout.addStretch()
         alayout.addLayout(topLayout)
@@ -282,21 +284,112 @@ class JournalWindow(QtWidgets.QMainWindow):
 
         self.layout.addLayout(alayout)
 
+        # make sure metadata is up to date
+        self.updateMetaDataByDate()
+
+
+    def findMetaData(self, document):
+        data = [] # list of tuples as (TAG, value)
+        for line in document.split('\n'):
+            t = line.split(':')
+            # will ignore things after a second colon
+            if len(t) >= 2 and t[0].isupper():
+                data.append((t[0],t[1]))
+        return data
+
+    # rebuilds dictionary of metadata to list of tuples of date and values
+    def rebuildMetaData(self):
+        self.metaData = {}
+        for date, data in self.metaDataByDate.items():
+            for tag,val in data:
+                if tag not in self.metaData:
+                    self.metaData[tag] = [(date,val)]
+                else:
+                    self.metaData[tag].append((date,val))
+
+        # update combo box with list of tags
+        self.ccb.clear()
+        tags = []
+        for tag, data in self.metaData.items():
+            tags.append(tag)
+        tags.sort()
+        # setup everything as unchecked
+        for i,tag in enumerate(tags):
+            self.ccb.addItem(tag)
+            item = self.ccb.model().item(i, 0)
+            item.setCheckState(QtCore.Qt.Unchecked)
+
+    def updateMetaDataByDate(self):
+        newCount = 0
+        for date,doc in self.journals.items():
+            if date not in self.metaDataByDate:
+                newCount += 1
+                data = self.findMetaData(doc)
+                self.metaDataByDate[date] = data
+        if newCount > 0:
+            self.rebuildMetaData()
+        print(f'{newCount} new metadatas')
+
+
     def plotWithOptions(self):
         isChecked = self.cartoonAction.isChecked()
-        self.opts['cartoonMode'] = isChecked
+        self.opts['cartoonMode'] = f'{isChecked}'
         if isChecked:
             with plt.xkcd():
                 self.plot()
         else:
             self.plot()
 
+    def isPlottable(self, tagList):
+        for t in tagList:
+            try: # check if each value can be a number
+                float(t[1])
+                continue
+            except ValueError:
+                return False
+        return True
+
     def plot(self):
-        # random data
-        data = [random.random() for i in range(10)]
         self.figure.clear()
         ax = self.figure.add_subplot(111)
-        ax.plot(data, '*-')
+        # give non abbreviated date when hovering
+        ax.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
+
+        # find all checked tags in the combo box
+        tags = []
+        for i in range(self.ccb.count()):
+            item = self.ccb.model().item(i,0)
+            if item.checkState() == QtCore.Qt.Checked:
+                tag = self.ccb.itemText(i)
+                tags.append(tag)
+
+        for tag in tags:
+            if tag not in self.metaData:
+                print(f"Error: tag '{tag}' not found!")
+                continue
+            tagList = self.metaData[tag]
+            if not self.isPlottable(tagList):
+                print(f"Error: tag '{tag}' contains non numeric values, can't plot")
+                continue
+
+            tagList.sort() #sorts by date
+
+            # seperate tuple list into x and y lists
+            xd = [QtCore.QDateTime(t[0]).toPyDateTime() for t in tagList]                
+            yd = [float(t[1]) for t in tagList]      
+
+            ax.plot(xd, yd, '-o', label=tag)
+
+        ax.set_xlabel('Date')
+        #self.figure.autofmt_xdate()
+        #self.figure.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+        #self.figure.legend('bottom left')
+        #ax.set_title('hello there i am a test')
+        #ypad = 1.2 if self.getOpt('cartoonMode') else 1.1
+        #ax.legend(loc='upper center', bbox_to_anchor=(0.5, ypad), ncol=4)
+        
+        ax.legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3, ncol=4, borderaxespad=0.) #mode='expand'
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=20)#, ha='right')
         self.canvas.draw()
 
     # deserialize option from its string form and return correct type object
