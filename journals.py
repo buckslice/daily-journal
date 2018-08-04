@@ -20,7 +20,7 @@ class JournalWindow(QtWidgets.QMainWindow):
 
         # init variables
         self.calendar = None
-        self.currentDate = QtCore.QDate.currentDate()
+        self.curJournalDate = QtCore.QDate.currentDate()
 
         self.loadConfig()
 
@@ -63,10 +63,12 @@ class JournalWindow(QtWidgets.QMainWindow):
 
 
     def openSaveDialog(self):
-        options = QtWidgets.QFileDialog.DontResolveSymlinks |  QtWidgets.QFileDialog.ShowDirsOnly
+        options = QtWidgets.QFileDialog.DontResolveSymlinks | QtWidgets.QFileDialog.ShowDirsOnly
         self.opts['saveLocation'] = QtWidgets.QFileDialog.getExistingDirectory(self, 'Select the save folder for your journals', '', options)
 
+    # loads all the journals into memory
     def loadJournals(self):
+        # make sure save location is correctly specified and prompt if not
         notInOpts = 'saveLocation' not in self.opts 
         if notInOpts or not os.path.exists(self.opts['saveLocation']):
             msg = QtWidgets.QMessageBox()
@@ -88,8 +90,7 @@ class JournalWindow(QtWidgets.QMainWindow):
         print(f'loading journals from folder at: {self.opts["saveLocation"]}')
 
         # load all files in that folder recursively
-        # check for correct date by name or by creation date
-        # have journal show journal date at top of file in a label like 'July-16-2018, 5 days ago'
+        # check for correct date by name (todo: or by creation date)
         files = self.getFilePaths(self.opts['saveLocation'])
         for file in files:
             n = os.path.split(file)[1]
@@ -113,7 +114,7 @@ class JournalWindow(QtWidgets.QMainWindow):
         self.openJournalFrame()
 
     #finds abspath of all text files in rootDir (and subdirectories)
-    def getFilePaths(self, rootDir = '.'): # default to local dir
+    def getFilePaths(self, rootDir='.'): # default to local dir
         files = []
         for dirpath, dirnames, filenames in os.walk(rootDir):
             for s in filenames:
@@ -125,7 +126,7 @@ class JournalWindow(QtWidgets.QMainWindow):
         if not self.editor:
             return
 
-        name = self.currentDate.toString('yyyy-MM-dd')
+        name = self.curJournalDate.toString('yyyy-MM-dd')
         fileName = os.path.join(self.opts['saveLocation'],f'{name}.txt')
         words = str(self.editor.toPlainText())
         if not words: # if editor is empty
@@ -137,20 +138,20 @@ class JournalWindow(QtWidgets.QMainWindow):
                 print(f'{name} empty journal, not saving')
 
             # remove from memory too
-            if self.currentDate in self.journals:
-                del self.journals[self.currentDate]
+            if self.curJournalDate in self.journals:
+                del self.journals[self.curJournalDate]
             return
 
         # update current entry in memory
-        self.journals[self.currentDate] = words
+        self.journals[self.curJournalDate] = words
         # save to journal folder
         with open(fileName, 'w') as file:
             print(f'{name} saving journal')
             file.write(words)
 
         # remove metaData entry so it gets regenerated next time
-        if self.currentDate in self.metaDataByDate:
-            del self.metaDataByDate[self.currentDate]
+        if self.curJournalDate in self.metaDataByDate:
+            del self.metaDataByDate[self.curJournalDate]
 
 
     def loadConfig(self):
@@ -194,13 +195,24 @@ class JournalWindow(QtWidgets.QMainWindow):
     def updateDate(self, date=None):
         if date:
             self.saveCurrentJournal()
-            self.currentDate = date
+            self.curJournalDate = date
 
-        if self.currentDate in self.journals:
-            self.editor.setPlainText(self.journals[self.currentDate])
+        if self.curJournalDate in self.journals:
+            self.editor.setPlainText(self.journals[self.curJournalDate])
         else:
             self.editor.setPlainText('')
-        self.dateButton.setText(self.currentDate.toString('MMMM d, yyyy'))
+        self.dateButton.setText(self.curJournalDate.toString('MMMM d, yyyy'))
+
+        # calculate label string that tells you relation from journal to today
+        dayDiff = QtCore.QDate.currentDate().daysTo(self.curJournalDate)
+        dayStr = 'days' if abs(dayDiff) > 1 else 'day'
+        if dayDiff == 0:
+            ageStr = ' today'
+        elif dayDiff < 0:
+            ageStr = f' {-dayDiff} {dayStr} ago'
+        elif dayDiff > 0:
+            ageStr = f' {dayDiff} {dayStr} in the future?'
+        self.ageLabel.setText(ageStr)
 
     def openJournalFrame(self):
         self.optionsMenu.clear()
@@ -209,26 +221,27 @@ class JournalWindow(QtWidgets.QMainWindow):
 
         self.editor = MyPlainTextEdit()
 
-        hf = QtGui.QFont('Helvetica', 14)
-
+        # action for choosing new font
         fontAction = QtWidgets.QAction('Set Font', self)
         fontAction.triggered.connect(self.openFontWindow)
-
         self.optionsMenu.addAction(fontAction)
 
+        # actions for changing editor colors
         self.bgColorAction = QtWidgets.QAction('Set BG', self)
         self.bgColorAction.triggered.connect(functools.partial(self.setEditorColor, True, True))
         self.optionsMenu.addAction(self.bgColorAction)
-
         self.fgColorAction = QtWidgets.QAction('Set FG', self)
         self.fgColorAction.triggered.connect(functools.partial(self.setEditorColor, False, True))
         self.optionsMenu.addAction(self.fgColorAction)
 
+        hf = QtGui.QFont('Helvetica', 14)
         jlayout = QtWidgets.QVBoxLayout()
         hlayout = QtWidgets.QHBoxLayout()
         self.dateButton = QtWidgets.QPushButton('', font=hf)
         self.dateButton.clicked.connect(self.openCalendar)
         hlayout.addWidget(self.dateButton)
+        self.ageLabel = QtWidgets.QLabel('today', font=hf)
+        hlayout.addWidget(self.ageLabel)
         hlayout.addStretch()
 
         jlayout.addLayout(hlayout)
@@ -340,15 +353,17 @@ class JournalWindow(QtWidgets.QMainWindow):
         else:
             self.plot()
 
+    # checks if each value in list can be cast as a number
     def isPlottable(self, tagList):
         for t in tagList:
-            try: # check if each value can be a number
-                float(t[1])
+            try:
+                float(t[1]) # second part of tuple is value
                 continue
             except ValueError:
                 return False
         return True
 
+    # plot each tag
     def plot(self):
         self.figure.clear()
         ax = self.figure.add_subplot(111)
@@ -364,23 +379,27 @@ class JournalWindow(QtWidgets.QMainWindow):
                 tags.append(tag)
 
         for tag in tags:
+            # make sure tag has metaData
             if tag not in self.metaData:
                 print(f"Error: tag '{tag}' not found!")
                 continue
             tagList = self.metaData[tag]
+            # make sure tag is plottable
             if not self.isPlottable(tagList):
                 print(f"Error: tag '{tag}' contains non numeric values, can't plot")
                 continue
 
             tagList.sort() #sorts by date
 
-            # seperate tuple list into x and y lists
+            # separate tuples into x and y lists
             xd = [QtCore.QDateTime(t[0]).toPyDateTime() for t in tagList]                
             yd = [float(t[1]) for t in tagList]      
 
             ax.plot(xd, yd, '-o', label=tag)
 
         ax.set_xlabel('Date')
+
+        # testing out some other plot options
         #self.figure.autofmt_xdate()
         #self.figure.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
         #self.figure.legend('bottom left')
@@ -389,7 +408,7 @@ class JournalWindow(QtWidgets.QMainWindow):
         #ax.legend(loc='upper center', bbox_to_anchor=(0.5, ypad), ncol=4)
         
         ax.legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3, ncol=4, borderaxespad=0.) #mode='expand'
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=20)#, ha='right')
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=25)#, ha='right')
         self.canvas.draw()
 
     # deserialize option from its string form and return correct type object
@@ -405,6 +424,7 @@ class JournalWindow(QtWidgets.QMainWindow):
         else:
             print(f'unknown opt: {opt}!')
 
+    # opens a font selection dialog
     def openFontWindow(self):
         font,valid = QtWidgets.QFontDialog.getFont(self.getOpt('font'))
         if valid:
@@ -419,26 +439,25 @@ class JournalWindow(QtWidgets.QMainWindow):
     def setEditorColor(self, isBg, prompt):
         optStr = 'bgColor' if isBg else 'fgColor'
         color = self.getOpt(optStr)
-
+        # if prompt then get a new color from a dialog
         if prompt:
             promptStr = f'Select {"background color" if isBg else "foreground color"}'
-            color = QtWidgets.QColorDialog.getColor(
-                color, self.parentWidget(), promptStr)
+            color = QtWidgets.QColorDialog.getColor(color, self.parentWidget(), promptStr)
             if not color.isValid():
                 return
-
+        # set an icon with the color next to the menu action
         pixmap = QtGui.QPixmap(QtCore.QSize(16, 16))
         pixmap.fill(color)
         action = self.bgColorAction if isBg else self.fgColorAction
         action.setIcon(QtGui.QIcon(pixmap))
-
+        # apply the color to the editor
         self.opts[optStr] = [color.red(), color.green(), color.blue()]
         vp = self.editor.viewport()
         p = vp.palette()
         p.setColor((vp.backgroundRole() if isBg else vp.foregroundRole()), color)
         vp.setPalette(p)
 
-
+    # clears all widgets and layouts from the given layout
     def clearLayout(self, layout):
         while layout.count():
             child = layout.takeAt(0)
@@ -447,20 +466,19 @@ class JournalWindow(QtWidgets.QMainWindow):
             elif child.widget():
                 child.widget().deleteLater()
 
-
     def closeApp(self):
         self.close() # so close event is triggered
 
+    # triggered when app is closed, this saves everything
     def closeEvent(self, e):
         if self.calendar:
             self.calendar.close()
         self.saveCurrentJournal()
         self.saveConfig()
         print('goodbye!!!')
-        # save config options here to file
 
 
-
+# slightly modified version of normal widget to have tabs insert 4 spaces instead
 class MyPlainTextEdit(QtWidgets.QPlainTextEdit):
     def __init__(self, *args):
         QtWidgets.QPlainTextEdit.__init__(self, *args)
@@ -472,7 +490,8 @@ class MyPlainTextEdit(QtWidgets.QPlainTextEdit):
         else:
             QtWidgets.QPlainTextEdit.keyPressEvent(self, event)
 
-
+# little popup window with calendar and button to open the journal at selected date
+# also highlights dates that have journal entries
 class CalendarDateSelect(QtWidgets.QFrame):
     def __init__(self, window, journalDates, *args):
         QtWidgets.QFrame.__init__(self, *args)
@@ -483,7 +502,6 @@ class CalendarDateSelect(QtWidgets.QFrame):
         self.cal = QtWidgets.QCalendarWidget()
 
         form = QtGui.QTextCharFormat()
-        #p = QtGui.QPen(QtGui.QColor(0,255,0))
         form.setBackground(QtGui.QColor(0,255,0))
         for date in journalDates:
             self.cal.setDateTextFormat(date, form)
@@ -503,7 +521,7 @@ class CalendarDateSelect(QtWidgets.QFrame):
         self.window.updateDate(self.cal.selectedDate())
         self.close()
 
-
+# combo box where you can select multiple options at once
 class CheckableComboBox(QtWidgets.QComboBox):
     def __init__(self):
         super(CheckableComboBox, self).__init__()
