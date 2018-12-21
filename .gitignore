@@ -1,0 +1,10 @@
+*
+!*.gitignore
+!*.gitattributes
+!*Readme.md
+
+!*.pyproj
+!*.sln
+
+!journals.py
+!words.py

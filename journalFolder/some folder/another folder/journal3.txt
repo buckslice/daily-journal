@@ -1,7 +1,0 @@
-this is a stupid test
-
-HAPPINESS: 3
-DOG: 1
-CAT: hello?
-MOVIE: MATRIX
-HUNGER: 1
